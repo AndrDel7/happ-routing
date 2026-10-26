@@ -59,14 +59,11 @@ jobs:
           old_rules = {k: v for k, v in old.items() if k != 'LastUpdated'}
           changed = hashes != state or old_rules != profile
           profile['LastUpdated'] = str(int(time.time())) if changed else old['LastUpdated']
-          path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + '
-')
-          statepath.write_text(json.dumps(hashes, indent=2, sort_keys=True) + '
-')
+          path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + chr(10))
+          statepath.write_text(json.dumps(hashes, indent=2, sort_keys=True) + chr(10))
           compact = json.dumps(profile, ensure_ascii=False, separators=(',', ':')).encode()
           link = 'happ://routing/onadd/' + base64.b64encode(compact).decode()
-          pathlib.Path('routing.txt').write_text(link + '
-')
+          pathlib.Path('routing.txt').write_text(link + chr(10))
           assert len(link.encode()) < 8192
           print('Profile changed:', changed, 'LastUpdated:', profile['LastUpdated'])
           PY
