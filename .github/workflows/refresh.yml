@@ -1,0 +1,80 @@
+name: Refresh Happ routing
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/refresh.yml']
+  schedule:
+    - cron: '17 3 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: refresh-routing
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate upstream databases and generate profile
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib, time, urllib.request
+          base = 'https://github.com/1andrevich/Re-filter-lists/releases/latest/download/'
+          hashes = {}
+          for name in ('geoip.dat', 'geosite.dat'):
+              request = urllib.request.Request(base + name, headers={'User-Agent': 'happ-routing-refresh'})
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  data = response.read(32 * 1024 * 1024 + 1)
+              if not 100 < len(data) <= 32 * 1024 * 1024 or data.lstrip().startswith((b'<', b'{')):
+                  raise RuntimeError('Invalid upstream database: ' + name)
+              hashes[name] = hashlib.sha256(data).hexdigest()
+          profile = {
+              'Name': 'AndrDel Refilter',
+              'GlobalProxy': 'false',
+              'RouteOrder': 'block-direct-proxy',
+              'RemoteDNSType': 'DoH',
+              'RemoteDNSDomain': 'https://cloudflare-dns.com/dns-query',
+              'RemoteDNSIP': '1.1.1.1',
+              'DomesticDNSType': 'DoH',
+              'DomesticDNSDomain': 'https://common.dot.dns.yandex.net/dns-query',
+              'DomesticDNSIP': '77.88.8.8',
+              'Geoipurl': base + 'geoip.dat',
+              'Geositeurl': base + 'geosite.dat',
+              'DnsHosts': {'cloudflare-dns.com': '1.1.1.1', 'common.dot.dns.yandex.net': '77.88.8.8'},
+              'DirectSites': [],
+              'DirectIp': ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'],
+              'ProxySites': ['geosite:refilter'],
+              'ProxyIp': ['geoip:refilter'],
+              'BlockSites': [],
+              'BlockIp': [],
+              'DomainStrategy': 'IPOnDemand',
+              'FakeDNS': 'false'
+          }
+          path = pathlib.Path('profile.json')
+          old = json.loads(path.read_text()) if path.exists() else {}
+          statepath = pathlib.Path('upstream-sha256.json')
+          state = json.loads(statepath.read_text()) if statepath.exists() else {}
+          old_rules = {k: v for k, v in old.items() if k != 'LastUpdated'}
+          changed = hashes != state or old_rules != profile
+          profile['LastUpdated'] = str(int(time.time())) if changed else old['LastUpdated']
+          path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + '
+')
+          statepath.write_text(json.dumps(hashes, indent=2, sort_keys=True) + '
+')
+          compact = json.dumps(profile, ensure_ascii=False, separators=(',', ':')).encode()
+          link = 'happ://routing/onadd/' + base64.b64encode(compact).decode()
+          pathlib.Path('routing.txt').write_text(link + '
+')
+          assert len(link.encode()) < 8192
+          print('Profile changed:', changed, 'LastUpdated:', profile['LastUpdated'])
+          PY
+      - name: Publish changes only when needed
+        run: |
+          git add profile.json routing.txt upstream-sha256.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Refresh Refilter routing profile'
+          git push
